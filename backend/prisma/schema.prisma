@@ -1,0 +1,114 @@
+// schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  password     String
+  name         String
+  isVerified   Boolean   @default(false)
+  otpCode      String?
+  otpExpires   DateTime?
+  refreshToken String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  serviceOrders ServiceOrder[]
+}
+
+model Event {
+  id        String   @id @default(uuid())
+  name      String
+  latitude  Float
+  longitude Float
+  startDate DateTime
+  endDate   DateTime
+  status    String   // PENDING, ACTIVE, FINISHED
+
+  serviceOrders ServiceOrder[]
+  createdAt     DateTime @default(now())
+}
+
+model ServiceOrder {
+  id        String   @id @default(uuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  status    String   // DRAFT, SEPARATING, DISPATCHED, RETURNED
+  
+  items     ServiceOrderItem[]
+  createdAt DateTime @default(now())
+}
+
+model MaterialCategory {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  materials Material[]
+}
+
+model Material {
+  id         String           @id @default(uuid())
+  name       String
+  categoryId String
+  category   MaterialCategory @relation(fields: [categoryId], references: [id])
+  stock      Int              @default(0)
+
+  templates     StructureMaterialTemplate[]
+  movements     InventoryMovement[]
+  orderItems    ServiceOrderItem[]
+
+  @@unique([name, categoryId]) // Permite nomes duplicados em categorias diferentes
+}
+
+model StructureType {
+  id         String      @id @default(uuid())
+  name       String      @unique // Tenda, Treliçado, Galpão
+  structures Structure[]
+}
+
+model Structure {
+  id              String        @id @default(uuid())
+  structureTypeId String
+  type            StructureType @relation(fields: [structureTypeId], references: [id])
+  name            String        // 10x10, Q30, Grande
+
+  templates       StructureMaterialTemplate[]
+}
+
+// Gabarito de Materiais
+model StructureMaterialTemplate {
+  id          String    @id @default(uuid())
+  structureId String
+  structure   Structure @relation(fields: [structureId], references: [id])
+  materialId  String
+  material    Material  @relation(fields: [materialId], references: [id])
+  quantity    Int
+
+  @@unique([structureId, materialId])
+}
+
+model ServiceOrderItem {
+  id             String       @id @default(uuid())
+  serviceOrderId String
+  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+  materialId     String
+  material       Material     @relation(fields: [materialId], references: [id])
+  quantity       Int
+}
+
+model InventoryMovement {
+  id         String   @id @default(uuid())
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  type       String   // IN, OUT
+  quantity   Int
+  date       DateTime @default(now())
+}
