@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMaterialDto } from './dto/create-materials.dto';
 import { CreateStructureTemplateDto } from './dto/create-structure-template.dto';
+import { UpdateMaterialDto } from './dto/update-material.dto';
 
 @Injectable()
 export class MaterialsService {
@@ -61,5 +62,30 @@ export class MaterialsService {
 
   async findAllStructures() {
     return this.prisma.structure.findMany({ include: { type: true, templates: true } });
+  }
+
+  // --- NOVOS MÉTODOS DE CRUD ABAIXO ---
+
+  async findOneMaterial(id: string) {
+    return this.prisma.material.findUnique({ where: { id }, include: { category: true } });
+  }
+
+  async updateMaterial(id: string, dto: UpdateMaterialDto) {
+    return this.prisma.material.update({
+      where: { id },
+      data: dto,
+    });
+  }
+
+  async removeMaterial(id: string) {
+    return this.prisma.material.delete({ where: { id } });
+  }
+
+  async removeStructure(id: string) {
+    // Exclui primeiro o gabarito (dependência) e depois a estrutura
+    return this.prisma.$transaction(async (tx) => {
+      await tx.structureMaterialTemplate.deleteMany({ where: { structureId: id } });
+      return tx.structure.delete({ where: { id } });
+    });
   }
 }

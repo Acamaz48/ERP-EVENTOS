@@ -1,7 +1,8 @@
-import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, Param, Patch, Delete } from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { CreateMaterialDto } from './dto/create-materials.dto';
 import { CreateStructureTemplateDto } from './dto/create-structure-template.dto';
+import { UpdateMaterialDto } from './dto/update-material.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('materials')
@@ -27,5 +28,25 @@ export class MaterialsController {
   @Get('structure')
   findAllStructures() {
     return this.materialsService.findAllStructures();
+  }
+
+  @Get(':id')
+  findOneMaterial(@Param('id') id: string) {
+    return this.materialsService.findOneMaterial(id);
+  }
+
+  @Patch(':id')
+  updateMaterial(@Param('id') id: string, @Body() dto: UpdateMaterialDto) {
+    return this.materialsService.updateMaterial(id, dto);
+  }
+
+  @Delete(':id')
+  removeMaterial(@Param('id') id: string) {
+    return this.materialsService.removeMaterial(id);
+  }
+
+  @Delete('structure/:id')
+  removeStructure(@Param('id') id: string) {
+    return this.materialsService.removeStructure(id);
   }
 }

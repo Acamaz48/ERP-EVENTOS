@@ -1,6 +1,7 @@
-import { Controller, Post, Get, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, Request, Param, Patch, Delete } from '@nestjs/common';
 import { ServiceOrdersService } from './service-orders.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
+import { UpdateServiceOrderDto } from './dto/update-service-order.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('service-orders')
@@ -17,5 +18,20 @@ export class ServiceOrdersController {
   @Get()
   findAll() {
     return this.serviceOrdersService.findAll();
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.serviceOrdersService.findOne(id);
+  }
+
+  @Patch(':id/status')
+  updateStatus(@Param('id') id: string, @Body() dto: UpdateServiceOrderDto) {
+    return this.serviceOrdersService.updateStatus(id, dto.status);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.serviceOrdersService.remove(id);
   }
 }

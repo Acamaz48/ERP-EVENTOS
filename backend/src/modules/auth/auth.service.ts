@@ -92,9 +92,22 @@ export class AuthService {
     await this.validateRefreshToken(userId, rToken);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     
-    // Adicione esta linha para satisfazer o TypeScript:
     if (!user) throw new UnauthorizedException('Usuário não encontrado.');
     
     return this.generateToken(user.id, user.email);
+  }
+
+  // --- NOVOS MÉTODOS DE CRUD DO USUÁRIO ABAIXO ---
+
+  async updateProfile(userId: string, name: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { name },
+      select: { id: true, name: true, email: true } // Evita retornar a senha e os tokens no JSON de resposta
+    });
+  }
+
+  async deleteAccount(userId: string) {
+    return this.prisma.user.delete({ where: { id: userId } });
   }
 }

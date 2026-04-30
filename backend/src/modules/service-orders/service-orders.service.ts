@@ -29,7 +29,7 @@ export class ServiceOrdersService {
         where: { structureId: { in: structureIds } },
       });
 
-      // Agrupa materiais repetidos (ex: várias estruturas que usam o mesmo parafuso)
+      // Agrupa materiais repetidos
       const materialMap = new Map<string, number>();
       templates.forEach((item) => {
         const currentQty = materialMap.get(item.materialId) || 0;
@@ -59,6 +59,30 @@ export class ServiceOrdersService {
   async findAll() {
     return this.prisma.serviceOrder.findMany({
       include: { event: true, items: true },
+    });
+  }
+
+  // --- NOVOS MÉTODOS DE CRUD ABAIXO ---
+
+  async findOne(id: string) {
+    return this.prisma.serviceOrder.findUnique({
+      where: { id },
+      include: { event: true, items: { include: { material: true } } },
+    });
+  }
+
+  async updateStatus(id: string, status: string) {
+    return this.prisma.serviceOrder.update({
+      where: { id },
+      data: { status },
+    });
+  }
+
+  async remove(id: string) {
+    // Exclui os itens da OS primeiro por causa da chave estrangeira, depois deleta a OS
+    return this.prisma.$transaction(async (tx) => {
+      await tx.serviceOrderItem.deleteMany({ where: { serviceOrderId: id } });
+      return tx.serviceOrder.delete({ where: { id } });
     });
   }
 }

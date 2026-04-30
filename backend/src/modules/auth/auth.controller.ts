@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Body, Get, UseGuards, Request, Patch, Delete } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
@@ -33,5 +33,17 @@ export class AuthController {
       mensagem: 'Se você está vendo isso, seu token é válido!',
       usuarioLogado: req.user // O req.user foi injetado pelo nosso jwt.strategy.ts
     };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  updateProfile(@Request() req, @Body() body: any) {
+    return this.authService.updateProfile(req.user.userId, body.name);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('account')
+  deleteAccount(@Request() req) {
+    return this.authService.deleteAccount(req.user.userId);
   }
 }
