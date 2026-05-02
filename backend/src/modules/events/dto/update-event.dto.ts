@@ -1,8 +1,13 @@
 export class UpdateEventDto {
   name?: string;
-  latitude?: number;
-  longitude?: number;
   startDate?: string;
   endDate?: string;
   status?: string;
+  
+  // Campos de endereço também opcionais
+  latitude?: number;
+  longitude?: number;
+  street?: string;
+  city?: string;
+  state?: string;
 }

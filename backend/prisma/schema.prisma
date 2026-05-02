@@ -26,14 +26,38 @@ model User {
 model Event {
   id        String   @id @default(uuid())
   name      String
-  latitude  Float
-  longitude Float
   startDate DateTime
   endDate   DateTime
   status    String   // PENDING, ACTIVE, FINISHED
 
+  // Relacionamento com Endereço
+  addressId String
+  address   Address  @relation(fields: [addressId], references: [id])
+
   serviceOrders ServiceOrder[]
   createdAt     DateTime @default(now())
+}
+model Address {
+  id          String   @id @default(uuid())
+  street      String?  // Rua/Avenida (Opcional)
+  number      String?  // Número (Opcional)
+  city        String?  // Cidade (Opcional)
+  state       String?  // Estado (Opcional)
+  zipCode     String?  // CEP (Opcional)
+  latitude    Float
+  longitude   Float
+
+  events           Event[]
+  operationalUnits OperationalUnit[]
+}
+
+model OperationalUnit {
+  id        String   @id @default(uuid())
+  name      String   // Ex: Galpão Principal, Filial SP
+  
+  // Relacionamento com Endereço
+  addressId String
+  address   Address  @relation(fields: [addressId], references: [id])
 }
 
 model ServiceOrder {

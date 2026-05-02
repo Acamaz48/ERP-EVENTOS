@@ -11,42 +11,74 @@ export class EventsService {
     return this.prisma.event.create({
       data: {
         name: createDto.name,
-        latitude: createDto.latitude,
-        longitude: createDto.longitude,
         startDate: new Date(createDto.startDate),
         endDate: new Date(createDto.endDate),
         status: createDto.status,
+        // O Prisma cria o Endereço na tabela Address e já faz a ligação (relação) com o Evento!
+        address: {
+          create: {
+            latitude: createDto.latitude,
+            longitude: createDto.longitude,
+            street: createDto.street,
+            city: createDto.city,
+            state: createDto.state,
+          }
+        }
       },
+      include: { address: true } // Traz os dados do endereço na resposta do Postman/Frontend
     });
   }
 
   async findAll() {
     return this.prisma.event.findMany({
-      orderBy: { startDate: 'asc' }, // Traz os eventos mais próximos primeiro
+      orderBy: { startDate: 'asc' },
+      include: { address: true }, 
     });
   }
 
-  // --- NOVOS MÉTODOS DE CRUD ABAIXO ---
-
   async findOne(id: string) {
-    return this.prisma.event.findUnique({ where: { id } });
+    return this.prisma.event.findUnique({ 
+      where: { id },
+      include: { address: true }
+    });
   }
 
   async update(id: string, updateDto: UpdateEventDto) {
+    // Separamos os campos de Evento dos campos de Endereço usando desestruturação
+    const { latitude, longitude, ...eventData } = updateDto;
+
     return this.prisma.event.update({
       where: { id },
       data: {
-        ...updateDto,
-        // Se a data vier na requisição, convertemos para Date. Se não, ignoramos (undefined).
-        startDate: updateDto.startDate ? new Date(updateDto.startDate) : undefined,
-        endDate: updateDto.endDate ? new Date(updateDto.endDate) : undefined,
+        ...eventData,
+        startDate: eventData.startDate ? new Date(eventData.startDate) : undefined,
+        endDate: eventData.endDate ? new Date(eventData.endDate) : undefined,
+        
+        // Se a pessoa enviou latitude ou longitude na edição, atualizamos a tabela Address
+        ...( (latitude !== undefined || longitude !== undefined) && {
+          address: {
+            update: { latitude, longitude }
+          }
+        })
       },
+      include: { address: true }
     });
   }
 
   async remove(id: string) {
-    // Nota de Arquiteto: Em produção real, é melhor mudar o status para 'DELETED' (Soft Delete).
-    // Mas para manter a simplicidade do nosso CRUD agora, vamos deletar fisicamente.
-    return this.prisma.event.delete({ where: { id } });
+    // Busca o evento para pegar o ID do endereço antes de deletar
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Deleta o Evento
+      const deletedEvent = await tx.event.delete({ where: { id } });
+      
+      // 2. Deleta o Endereço órfão (opcional, mas mantém o banco limpo)
+      if (event?.addressId) {
+        await tx.address.delete({ where: { id: event.addressId } });
+      }
+      
+      return deletedEvent;
+    });
   }
 }
