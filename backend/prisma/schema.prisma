@@ -14,25 +14,40 @@ enum UserRole {
   ADMIN
 }
 
+// <- ADICIONADO: Para soft delete de usuários
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// <- ALTERADO: Novos status do fluxo de ping-pong (Produção <-> Galpão)
 enum ServiceOrderStatus {
-  ACTIVE         // Criada / Em edição
-  ANALYSIS       // Aguardando galpão
-  ADJUSTMENT     // Retornou por falta de estoque
-  READY          // Validada, estoque reservado/abatido
+  DRAFT      // Criado pela produção (rascunho)
+  ACTIVE     // Enviado para galpão
+  PENDING    // Retornou para produção para ajuste
+  READY      // Validado e finalizado
+  CANCELED   // Cancelado
+}
+
+// <- ADICIONADO: Para rastreabilidade de itens (Event Sourcing)
+enum ServiceOrderItemStatus {
+  ADDED
+  REMOVED
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
+  id           String     @id @default(uuid())
+  email        String     @unique
   password     String
   name         String
-  role         UserRole  @default(PRODUCAO) // <- ADICIONADO (obrigatório para o fluxo)
-  isVerified   Boolean   @default(false)
+  role         UserRole   @default(PRODUCAO)
+  status       UserStatus @default(ACTIVE) // <- ADICIONADO: Status do usuário (Soft Delete)
+  isVerified   Boolean    @default(false)
   otpCode      String?
   otpExpires   DateTime?
   refreshToken String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   serviceOrders ServiceOrder[]
 }
@@ -67,12 +82,18 @@ model Address {
 }
 
 model OperationalUnit {
-  id   String @id @default(uuid())
-  name String // Ex: Galpão Principal, Filial SP
+  id        String   @id @default(uuid())
+  name      String   // Ex: Galpão Principal, Filial SP
   
-  // Relacionamento com Endereço
-  addressId String
-  address   Address @relation(fields: [addressId], references: [id])
+  // <- ALTERADO: Relacionamento com Endereço agora é OPCIONAL
+  addressId String?
+  address   Address? @relation(fields: [addressId], references: [id])
+
+  // <- ADICIONADO: Relacionamento com os itens da Ordem de Serviço
+  items     ServiceOrderItem[]
+
+  createdAt DateTime @default(now()) // <- ADICIONADO
+  updatedAt DateTime @updatedAt      // <- ADICIONADO
 }
 
 model ServiceOrder {
@@ -82,14 +103,14 @@ model ServiceOrder {
   userId       String
   user         User               @relation(fields: [userId], references: [id])
   
-  // <- ALTERADO E ADICIONADO PARA O NOVO FLUXO ->
-  status       ServiceOrderStatus @default(ACTIVE)
+  // <- ALTERADO: O padrão agora é DRAFT, pois a Produção cria o rascunho antes de enviar
+  status       ServiceOrderStatus @default(DRAFT)
   supplier     String?            // Dados do fornecedor
-  missingItems Json?              // Guarda o log de materiais faltantes (se rejeitado)
+  missingItems Json?              // Mantido para manter histórico de observações/erros
   
   items        ServiceOrderItem[]
   createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt // Adicionado para auditoria de tempo
+  updatedAt    DateTime           @updatedAt 
 }
 
 model MaterialCategory {
@@ -109,7 +130,7 @@ model Material {
   movements  InventoryMovement[]
   orderItems ServiceOrderItem[]
 
-  @@unique([name, categoryId]) // Permite nomes duplicados em categorias diferentes
+  @@unique([name, categoryId]) 
 }
 
 model StructureType {
@@ -140,12 +161,25 @@ model StructureMaterialTemplate {
 }
 
 model ServiceOrderItem {
-  id             String       @id @default(uuid())
-  serviceOrderId String
-  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
-  materialId     String
-  material       Material     @relation(fields: [materialId], references: [id])
-  quantity       Int
+  id                String                 @id @default(uuid())
+  quantity          Int
+  
+  serviceOrderId    String
+  serviceOrder      ServiceOrder           @relation(fields: [serviceOrderId], references: [id])
+  
+  materialId        String
+  material          Material               @relation(fields: [materialId], references: [id])
+
+  // <- ADICIONADO: Relacionamento com a Unidade Operacional (Galpão)
+  operationalUnitId String
+  operationalUnit   OperationalUnit        @relation(fields: [operationalUnitId], references: [id])
+  
+  // <- ADICIONADO: Status do Item para rastrear se foi incluído ou removido na negociação
+  status            ServiceOrderItemStatus @default(ADDED)
+  
+  // <- ADICIONADO: Timestamps de auditoria
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 }
 
 model InventoryMovement {

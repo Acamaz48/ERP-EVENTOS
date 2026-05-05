@@ -1,35 +1,39 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-// ADICIONADO: Importação do 'Prisma' para manipular os campos JSON corretamente
-import { ServiceOrderStatus, Prisma } from '@prisma/client'; 
+import { ServiceOrderStatus, UserRole, ServiceOrderItemStatus } from '@prisma/client';
 
-// CORREÇÃO 1: Mudado de 'interface' para 'class' para o NestJS conseguir ler no Controller
+export class OrderItemDto {
+  materialId!: string;
+  operationalUnitId!: string;
+  quantity!: number;
+}
+
 export class CreateOrUpdateOrderDto {
-  eventId!: string;
+  eventId!: string; 
   supplier?: string;
-  items!: { materialId: string; quantity: number }[];
+  items!: OrderItemDto[];
 }
 
 @Injectable()
 export class ServiceOrdersService {
   constructor(private prisma: PrismaService) {}
 
-  // 1. PRODUÇÃO: Criação inicial
+  // 1. CRIAÇÃO PELA PRODUÇÃO (Nasce como DRAFT)
   async createServiceOrder(userId: string, data: CreateOrUpdateOrderDto) {
-    if (!data.items || data.items.length === 0) {
-      throw new BadRequestException('A OS deve conter materiais.');
-    }
+    if (!data.items?.length) throw new BadRequestException('Ordem deve conter materiais.');
 
     return this.prisma.serviceOrder.create({
       data: {
         userId,
-        eventId: data.eventId,
+        eventId: data.eventId, 
         supplier: data.supplier,
-        status: ServiceOrderStatus.ACTIVE,
+        status: ServiceOrderStatus.DRAFT,
         items: {
           create: data.items.map(item => ({
             materialId: item.materialId,
+            operationalUnitId: item.operationalUnitId,
             quantity: item.quantity,
+            status: ServiceOrderItemStatus.ADDED,
           })),
         },
       },
@@ -37,109 +41,96 @@ export class ServiceOrdersService {
     });
   }
 
-  // 2. PRODUÇÃO: Edição da OS (Aplicável em ACTIVE ou ADJUSTMENT)
-  async updateServiceOrder(orderId: string, data: CreateOrUpdateOrderDto) {
-    const order = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
+  // 2. ATUALIZAÇÃO (Rastreabilidade via ADDED/REMOVED)
+  async updateServiceOrder(orderId: string, role: UserRole, data: CreateOrUpdateOrderDto) {
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      include: { items: { where: { status: ServiceOrderItemStatus.ADDED } } },
+    });
     
     if (!order) throw new NotFoundException('OS não encontrada.');
     
-    // CORREÇÃO 2: Verificação explícita substituindo o .includes()
-    if (order.status !== ServiceOrderStatus.ACTIVE && order.status !== ServiceOrderStatus.ADJUSTMENT) {
-      throw new BadRequestException(`Edição não permitida no status atual (${order.status}).`);
+    // CORREÇÃO 1: Substituído o .includes() por verificações explícitas
+    if (role === UserRole.PRODUCAO && order.status !== ServiceOrderStatus.DRAFT && order.status !== ServiceOrderStatus.PENDING) {
+      throw new BadRequestException('Produção só pode editar em DRAFT ou PENDING.');
+    }
+    if (role === UserRole.GALPAO && order.status !== ServiceOrderStatus.ACTIVE) {
+      throw new BadRequestException('Galpão só pode editar ordens ACTIVE.');
     }
 
     return this.prisma.$transaction(async (tx) => {
-      // Removemos itens antigos e inserimos os novos
-      await tx.serviceOrderItem.deleteMany({ where: { serviceOrderId: orderId } });
+      // Todos os itens atuais são marcados como REMOVED (invalidados)
+      if (order.items.length > 0) {
+        await tx.serviceOrderItem.updateMany({
+          where: { serviceOrderId: orderId, status: ServiceOrderItemStatus.ADDED },
+          data: { status: ServiceOrderItemStatus.REMOVED },
+        });
+      }
+
+      // Inserimos a nova configuração como ADDED
+      await tx.serviceOrderItem.createMany({
+        data: data.items.map(item => ({
+          serviceOrderId: orderId,
+          materialId: item.materialId,
+          operationalUnitId: item.operationalUnitId,
+          quantity: item.quantity,
+          status: ServiceOrderItemStatus.ADDED,
+        })),
+      });
 
       return tx.serviceOrder.update({
         where: { id: orderId },
         data: {
           eventId: data.eventId,
-          supplier: data.supplier,
-          missingItems: Prisma.DbNull, // CORREÇÃO 3: Jeito correto de limpar JSON no Prisma
-          items: {
-            create: data.items.map(item => ({
-              materialId: item.materialId,
-              quantity: item.quantity,
-            })),
-          },
+          supplier: data.supplier
         },
-        include: { items: true },
+        include: { items: { where: { status: ServiceOrderItemStatus.ADDED } } },
       });
     });
   }
 
-  // 3. PRODUÇÃO: Envia para o Galpão
-  async sendToWarehouse(orderId: string) {
+  // 3. SUBMISSÃO INTELIGENTE (Máquina de Estados)
+  async submitServiceOrder(orderId: string, role: UserRole) {
     const order = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('OS não encontrada.');
-    
-    if (order.status !== ServiceOrderStatus.ACTIVE && order.status !== ServiceOrderStatus.ADJUSTMENT) {
-      throw new BadRequestException('Apenas OS em ACTIVE ou ADJUSTMENT podem ser enviadas.');
+
+    let newStatus: ServiceOrderStatus;
+
+    if (role === UserRole.PRODUCAO) {
+      // CORREÇÃO 2: Substituído o .includes() por verificações explícitas
+      if (order.status !== ServiceOrderStatus.DRAFT && order.status !== ServiceOrderStatus.PENDING) {
+        throw new BadRequestException('Produção só pode submeter ordens DRAFT ou PENDING.');
+      }
+      newStatus = ServiceOrderStatus.ACTIVE; // Vai para o Galpão
+    } 
+    else if (role === UserRole.GALPAO) {
+      if (order.status !== ServiceOrderStatus.ACTIVE) {
+        throw new BadRequestException('Galpão só pode submeter ordens ACTIVE.');
+      }
+      newStatus = ServiceOrderStatus.PENDING; // Retorna para a Produção
+    } 
+    else {
+      throw new BadRequestException('Cargo inválido para esta operação.');
     }
 
     return this.prisma.serviceOrder.update({
       where: { id: orderId },
-      data: { status: ServiceOrderStatus.ANALYSIS },
+      data: { status: newStatus },
     });
   }
 
-  // 4. GALPÃO: Submit Inteligente (A Mágica)
-  async submitFromWarehouse(orderId: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.serviceOrder.findUnique({
-        where: { id: orderId },
-        include: { items: { include: { material: true } } },
-      });
+  // 4. FINALIZAÇÃO DA PRODUÇÃO (Atingindo o READY)
+  async finalizeServiceOrder(orderId: string, role: UserRole) {
+    if (role !== UserRole.PRODUCAO) throw new BadRequestException('Apenas Produção pode finalizar (READY).');
+    
+    const order = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
+    if (order?.status !== ServiceOrderStatus.PENDING) {
+      throw new BadRequestException('Apenas ordens PENDING (validadas pelo galpão) podem ser finalizadas.');
+    }
 
-      if (!order) throw new NotFoundException('OS não encontrada.');
-      if (order.status !== ServiceOrderStatus.ANALYSIS) {
-        throw new BadRequestException('Apenas OS em ANALYSIS podem ser submetidas pelo galpão.');
-      }
-
-      // CORREÇÃO 4: Definido o tipo do array como any[] para não dar erro de 'never'
-      const missingItemsSnapshot: any[] = []; 
-
-      // Avalia cada item da OS contra o banco em tempo real
-      for (const item of order.items) {
-        if (item.material.stock < item.quantity) {
-          missingItemsSnapshot.push({
-            materialId: item.materialId,
-            materialName: item.material.name,
-            requested: item.quantity,
-            available: item.material.stock,
-            deficit: item.quantity - item.material.stock
-          });
-        }
-      }
-
-      // CASO 2 - ESTOQUE INSUFICIENTE
-      if (missingItemsSnapshot.length > 0) {
-        return tx.serviceOrder.update({
-          where: { id: orderId },
-          data: {
-            status: ServiceOrderStatus.ADJUSTMENT,
-            missingItems: missingItemsSnapshot, // Salva o log do que faltou
-          },
-        });
-      }
-
-      // CASO 1 - ESTOQUE SUFICIENTE: Abate do estoque e aprova
-      for (const item of order.items) {
-        await tx.material.update({
-          where: { id: item.materialId },
-          data: { stock: { decrement: item.quantity } },
-        });
-      }
-
-      return tx.serviceOrder.update({
-        where: { id: orderId },
-        data: {
-          status: ServiceOrderStatus.READY,
-          missingItems: Prisma.DbNull, // CORREÇÃO 3: Apaga erros passados
-        },
-      });
+    return this.prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: { status: ServiceOrderStatus.READY },
     });
   }
 }

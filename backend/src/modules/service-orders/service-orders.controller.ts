@@ -10,33 +10,31 @@ import { UserRole } from '@prisma/client';
 export class ServiceOrdersController {
   constructor(private readonly osService: ServiceOrdersService) {}
 
-  // 🛠️ ACESSO DA PRODUÇÃO
-
+  // 🛠️ CRIAÇÃO: Apenas Produção
   @Post()
   @Roles(UserRole.PRODUCAO)
   create(@Body() dto: CreateOrUpdateOrderDto, @Request() req) {
     return this.osService.createServiceOrder(req.user.userId, dto);
   }
 
+  // ✏️ EDIÇÃO: Produção e Galpão
   @Put(':id')
-  @Roles(UserRole.PRODUCAO)
-  update(@Param('id') id: string, @Body() dto: CreateOrUpdateOrderDto) {
-    return this.osService.updateServiceOrder(id, dto);
+  @Roles(UserRole.PRODUCAO, UserRole.GALPAO)
+  update(@Param('id') id: string, @Body() dto: CreateOrUpdateOrderDto, @Request() req) {
+    return this.osService.updateServiceOrder(id, req.user.role, dto);
   }
 
-  @Post(':id/send')
-  @Roles(UserRole.PRODUCAO)
-  sendToWarehouse(@Param('id') id: string) {
-    return this.osService.sendToWarehouse(id);
-  }
-
-
-  // 📦 ACESSO DO GALPÃO
-
+  // 🚀 SUBMIT ÚNICO: Produção ou Galpão (O Service roteia o status dependendo de quem chamou)
   @Post(':id/submit')
-  @Roles(UserRole.GALPAO)
-  submit(@Param('id') id: string) {
-    // Note que não há envio de Body. A decisão é 100% backend.
-    return this.osService.submitFromWarehouse(id);
+  @Roles(UserRole.PRODUCAO, UserRole.GALPAO)
+  submit(@Param('id') id: string, @Request() req) {
+    return this.osService.submitServiceOrder(id, req.user.role);
+  }
+
+  // ✅ FINALIZAÇÃO: Apenas Produção valida o que o galpão ajustou
+  @Post(':id/ready')
+  @Roles(UserRole.PRODUCAO)
+  finalize(@Param('id') id: string, @Request() req) {
+    return this.osService.finalizeServiceOrder(id, req.user.role);
   }
 }
