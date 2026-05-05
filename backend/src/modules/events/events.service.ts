@@ -22,7 +22,7 @@ export class EventsService {
             street: createDto.street,
             city: createDto.city,
             state: createDto.state,
-          }
+          } 
         }
       },
       include: { address: true } // Traz os dados do endereço na resposta do Postman/Frontend

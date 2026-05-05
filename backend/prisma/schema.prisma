@@ -8,11 +8,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  PRODUCAO
+  GALPAO
+  ADMIN
+}
+
+enum ServiceOrderStatus {
+  ACTIVE         // Criada / Em edição
+  ANALYSIS       // Aguardando galpão
+  ADJUSTMENT     // Retornou por falta de estoque
+  READY          // Validada, estoque reservado/abatido
+}
+
 model User {
   id           String    @id @default(uuid())
   email        String    @unique
   password     String
   name         String
+  role         UserRole  @default(PRODUCAO) // <- ADICIONADO (obrigatório para o fluxo)
   isVerified   Boolean   @default(false)
   otpCode      String?
   otpExpires   DateTime?
@@ -37,39 +51,45 @@ model Event {
   serviceOrders ServiceOrder[]
   createdAt     DateTime @default(now())
 }
+
 model Address {
-  id          String   @id @default(uuid())
-  street      String?  // Rua/Avenida (Opcional)
-  number      String?  // Número (Opcional)
-  city        String?  // Cidade (Opcional)
-  state       String?  // Estado (Opcional)
-  zipCode     String?  // CEP (Opcional)
-  latitude    Float
-  longitude   Float
+  id        String  @id @default(uuid())
+  street    String? // Rua/Avenida (Opcional)
+  number    String? // Número (Opcional)
+  city      String? // Cidade (Opcional)
+  state     String? // Estado (Opcional)
+  zipCode   String? // CEP (Opcional)
+  latitude  Float
+  longitude Float
 
   events           Event[]
   operationalUnits OperationalUnit[]
 }
 
 model OperationalUnit {
-  id        String   @id @default(uuid())
-  name      String   // Ex: Galpão Principal, Filial SP
+  id   String @id @default(uuid())
+  name String // Ex: Galpão Principal, Filial SP
   
   // Relacionamento com Endereço
   addressId String
-  address   Address  @relation(fields: [addressId], references: [id])
+  address   Address @relation(fields: [addressId], references: [id])
 }
 
 model ServiceOrder {
-  id        String   @id @default(uuid())
-  eventId   String
-  event     Event    @relation(fields: [eventId], references: [id])
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  status    String   // DRAFT, SEPARATING, DISPATCHED, RETURNED
+  id           String             @id @default(uuid())
+  eventId      String
+  event        Event              @relation(fields: [eventId], references: [id])
+  userId       String
+  user         User               @relation(fields: [userId], references: [id])
   
-  items     ServiceOrderItem[]
-  createdAt DateTime @default(now())
+  // <- ALTERADO E ADICIONADO PARA O NOVO FLUXO ->
+  status       ServiceOrderStatus @default(ACTIVE)
+  supplier     String?            // Dados do fornecedor
+  missingItems Json?              // Guarda o log de materiais faltantes (se rejeitado)
+  
+  items        ServiceOrderItem[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt // Adicionado para auditoria de tempo
 }
 
 model MaterialCategory {
@@ -85,9 +105,9 @@ model Material {
   category   MaterialCategory @relation(fields: [categoryId], references: [id])
   stock      Int              @default(0)
 
-  templates     StructureMaterialTemplate[]
-  movements     InventoryMovement[]
-  orderItems    ServiceOrderItem[]
+  templates  StructureMaterialTemplate[]
+  movements  InventoryMovement[]
+  orderItems ServiceOrderItem[]
 
   @@unique([name, categoryId]) // Permite nomes duplicados em categorias diferentes
 }

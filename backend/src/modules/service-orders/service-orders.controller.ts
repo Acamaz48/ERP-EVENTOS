@@ -1,37 +1,42 @@
-import { Controller, Post, Get, Body, UseGuards, Request, Param, Patch, Delete } from '@nestjs/common';
-import { ServiceOrdersService } from './service-orders.service';
-import { CreateServiceOrderDto } from './dto/create-service-order.dto';
-import { UpdateServiceOrderDto } from './dto/update-service-order.dto';
+import { Controller, Post, Put, Body, Param, UseGuards, Request } from '@nestjs/common';
+import { ServiceOrdersService, CreateOrUpdateOrderDto } from './service-orders.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { UserRole } from '@prisma/client';
 
 @Controller('service-orders')
-@UseGuards(JwtAuthGuard) // Protege todas as rotas deste controller
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ServiceOrdersController {
-  constructor(private readonly serviceOrdersService: ServiceOrdersService) {}
+  constructor(private readonly osService: ServiceOrdersService) {}
+
+  // 🛠️ ACESSO DA PRODUÇÃO
 
   @Post()
-  create(@Body() createDto: CreateServiceOrderDto, @Request() req) {
-    // O ID do usuário vem do token JWT (anexado pelo nosso Guard/Strategy)
-    return this.serviceOrdersService.create(createDto, req.user.userId);
+  @Roles(UserRole.PRODUCAO)
+  create(@Body() dto: CreateOrUpdateOrderDto, @Request() req) {
+    return this.osService.createServiceOrder(req.user.userId, dto);
   }
 
-  @Get()
-  findAll() {
-    return this.serviceOrdersService.findAll();
+  @Put(':id')
+  @Roles(UserRole.PRODUCAO)
+  update(@Param('id') id: string, @Body() dto: CreateOrUpdateOrderDto) {
+    return this.osService.updateServiceOrder(id, dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.serviceOrdersService.findOne(id);
+  @Post(':id/send')
+  @Roles(UserRole.PRODUCAO)
+  sendToWarehouse(@Param('id') id: string) {
+    return this.osService.sendToWarehouse(id);
   }
 
-  @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateServiceOrderDto) {
-    return this.serviceOrdersService.updateStatus(id, dto.status);
-  }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.serviceOrdersService.remove(id);
+  // 📦 ACESSO DO GALPÃO
+
+  @Post(':id/submit')
+  @Roles(UserRole.GALPAO)
+  submit(@Param('id') id: string) {
+    // Note que não há envio de Body. A decisão é 100% backend.
+    return this.osService.submitFromWarehouse(id);
   }
 }
