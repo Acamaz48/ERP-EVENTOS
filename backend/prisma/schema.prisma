@@ -74,8 +74,8 @@ model Address {
   city      String? // Cidade (Opcional)
   state     String? // Estado (Opcional)
   zipCode   String? // CEP (Opcional)
-  latitude  Float
-  longitude Float
+  latitude  Float?
+  longitude Float?
 
   events           Event[]
   operationalUnits OperationalUnit[]
