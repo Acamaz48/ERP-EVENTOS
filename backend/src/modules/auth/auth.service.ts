@@ -97,13 +97,66 @@ export class AuthService {
     return this.generateToken(user.id, user.email);
   }
 
-  // --- NOVOS MÉTODOS DE CRUD DO USUÁRIO ABAIXO ---
+  // ==========================================
+  // RECUPERAÇÃO DE SENHA (FORGOT / RESET)
+  // ==========================================
+
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    
+    // Mesmo se não achar o usuário, retornamos a mesma mensagem por segurança
+    // para não vazar quais emails existem no seu banco.
+    if (!user) {
+      return { message: 'Se o e-mail estiver cadastrado, você receberá um código OTP.' };
+    }
+
+    const otpCode = randomInt(100000, 999999).toString(); 
+    const otpExpires = new Date(Date.now() + 15 * 60000); // 15 minutos
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { otpCode, otpExpires }
+    });
+
+    console.log(`[EMAIL SIMULADO - RECUPERAÇÃO] Código OTP para ${email}: ${otpCode}`);
+
+    return { message: 'Se o e-mail estiver cadastrado, você receberá um código OTP.' };
+  }
+
+  async resetPassword(email: string, code: string, newPass: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    
+    if (!user || user.otpCode !== code) {
+      throw new UnauthorizedException('Código OTP inválido.');
+    }
+
+    if (user.otpExpires && user.otpExpires < new Date()) {
+      throw new UnauthorizedException('Código OTP expirado.');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPass, 10);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { 
+        password: hashedPassword, 
+        otpCode: null, 
+        otpExpires: null 
+      }
+    });
+
+    return { message: 'Senha alterada com sucesso. Você já pode fazer login com a nova senha.' };
+  }
+
+  // ==========================================
+  // --- MÉTODOS DE CRUD DO USUÁRIO ABAIXO ---
+  // ==========================================
 
   async updateProfile(userId: string, name: string) {
     return this.prisma.user.update({
       where: { id: userId },
       data: { name },
-      select: { id: true, name: true, email: true } // Evita retornar a senha e os tokens no JSON de resposta
+      select: { id: true, name: true, email: true } 
     });
   }
 
