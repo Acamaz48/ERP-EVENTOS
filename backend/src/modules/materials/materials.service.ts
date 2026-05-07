@@ -3,10 +3,23 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMaterialDto } from './dto/create-materials.dto';
 import { CreateStructureTemplateDto } from './dto/create-structure-template.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
+import { PhysicalItemStatus } from '@prisma/client';
 
 @Injectable()
 export class MaterialsService {
   constructor(private prisma: PrismaService) {}
+
+  // Exemplo de lógica para o seu Service futuramente
+async registerNewStock(materialId: string, operationalUnitId: string, quantity: number) {
+  const items = Array.from({ length: quantity }).map(() => ({
+    materialId,
+    operationalUnitId,
+    status: PhysicalItemStatus.AVAILABLE,
+  }));
+
+  // Cria 50 itens físicos de uma vez no banco
+  return this.prisma.physicalItem.createMany({ data: items });
+}
 
   // 1. Cria o Material e a Categoria (se não existir)
   async createMaterial(dto: CreateMaterialDto) {

@@ -1,4 +1,3 @@
-// schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,109 +7,107 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ==========================================
+// 📋 ENUMS
+// ==========================================
+
 enum UserRole {
   PRODUCAO
   GALPAO
   ADMIN
 }
 
-// <- ADICIONADO: Para soft delete de usuários
 enum UserStatus {
   ACTIVE
   INACTIVE
 }
 
-// <- ALTERADO: Novos status do fluxo de ping-pong (Produção <-> Galpão)
 enum ServiceOrderStatus {
-  DRAFT      // Criado pela produção (rascunho)
-  ACTIVE     // Enviado para galpão
-  PENDING    // Retornou para produção para ajuste
-  READY      // Validado e finalizado
-  CANCELED   // Cancelado
+  DRAFT
+  READY
+  ACTIVE
+  PENDING
+  CANCELED
 }
 
-// <- ADICIONADO: Para rastreabilidade de itens (Event Sourcing)
 enum ServiceOrderItemStatus {
   ADDED
   REMOVED
 }
 
-model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  password     String
-  name         String
-  role         UserRole   @default(PRODUCAO)
-  status       UserStatus @default(ACTIVE) // <- ADICIONADO: Status do usuário (Soft Delete)
-  isVerified   Boolean    @default(false)
-  otpCode      String?
-  otpExpires   DateTime?
-  refreshToken String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+// STATUS DO ITEM FÍSICO
+enum PhysicalItemStatus {
+  AVAILABLE      // Disponível no galpão
+  RESERVED       // Separado/em uso em uma Ordem de Serviço
+  MAINTENANCE    // Quebrado / Em manutenção
+  REMOVED        // Descartado / Perdido
+}
 
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  name          String
+  isVerified    Boolean        @default(false)
+  otpCode       String?
+  otpExpires    DateTime?
+  refreshToken  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  role          UserRole       @default(PRODUCAO)
+  status        UserStatus     @default(ACTIVE)
   serviceOrders ServiceOrder[]
 }
 
 model Event {
-  id        String   @id @default(uuid())
-  name      String
-  startDate DateTime
-  endDate   DateTime
-  status    String   // PENDING, ACTIVE, FINISHED
-
-  // Relacionamento com Endereço
-  addressId String
-  address   Address  @relation(fields: [addressId], references: [id])
-
+  id            String         @id @default(uuid())
+  name          String
+  startDate     DateTime
+  endDate       DateTime
+  status        String
+  createdAt     DateTime       @default(now())
+  addressId     String
+  address       Address        @relation(fields: [addressId], references: [id])
   serviceOrders ServiceOrder[]
-  createdAt     DateTime @default(now())
 }
 
 model Address {
-  id        String  @id @default(uuid())
-  street    String? // Rua/Avenida (Opcional)
-  number    String? // Número (Opcional)
-  city      String? // Cidade (Opcional)
-  state     String? // Estado (Opcional)
-  zipCode   String? // CEP (Opcional)
-  latitude  Float?
-  longitude Float?
-
+  id               String            @id @default(uuid())
+  street           String?
+  number           String?
+  city             String?
+  state            String?
+  zipCode          String?
+  latitude         Float?
+  longitude        Float?
   events           Event[]
   operationalUnits OperationalUnit[]
 }
 
 model OperationalUnit {
-  id        String   @id @default(uuid())
-  name      String   // Ex: Galpão Principal, Filial SP
+  id            String             @id @default(uuid())
+  name          String
+  addressId     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  address       Address?           @relation(fields: [addressId], references: [id])
   
-  // <- ALTERADO: Relacionamento com Endereço agora é OPCIONAL
-  addressId String?
-  address   Address? @relation(fields: [addressId], references: [id])
-
-  // <- ADICIONADO: Relacionamento com os itens da Ordem de Serviço
-  items     ServiceOrderItem[]
-
-  createdAt DateTime @default(now()) // <- ADICIONADO
-  updatedAt DateTime @updatedAt      // <- ADICIONADO
+  items         ServiceOrderItem[]
+  physicalItems PhysicalItem[]     // <- Relacionamento com os itens físicos no galpão
 }
 
 model ServiceOrder {
   id           String             @id @default(uuid())
   eventId      String
-  event        Event              @relation(fields: [eventId], references: [id])
   userId       String
-  user         User               @relation(fields: [userId], references: [id])
-  
-  // <- ALTERADO: O padrão agora é DRAFT, pois a Produção cria o rascunho antes de enviar
-  status       ServiceOrderStatus @default(DRAFT)
-  supplier     String?            // Dados do fornecedor
-  missingItems Json?              // Mantido para manter histórico de observações/erros
-  
-  items        ServiceOrderItem[]
   createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt 
+  missingItems Json?
+  supplier     String?
+  updatedAt    DateTime           @updatedAt
+  status       ServiceOrderStatus @default(DRAFT)
+  event        Event              @relation(fields: [eventId], references: [id])
+  user         User               @relation(fields: [userId], references: [id])
+  items        ServiceOrderItem[]
 }
 
 model MaterialCategory {
@@ -120,73 +117,83 @@ model MaterialCategory {
 }
 
 model Material {
-  id         String           @id @default(uuid())
-  name       String
-  categoryId String
-  category   MaterialCategory @relation(fields: [categoryId], references: [id])
-  stock      Int              @default(0)
+  id            String                      @id @default(uuid())
+  name          String
+  categoryId    String
+  stock         Int                         @default(0) // Usado para itens em massa (parafusos)
+  movements     InventoryMovement[]
+  category      MaterialCategory            @relation(fields: [categoryId], references: [id])
+  orderItems    ServiceOrderItem[]
+  templates     StructureMaterialTemplate[]
+  physicalItems PhysicalItem[]              // <- Relacionamento: 1 Material tem N Itens Físicos (ex: 10 Treliças individuais)
 
-  templates  StructureMaterialTemplate[]
-  movements  InventoryMovement[]
-  orderItems ServiceOrderItem[]
-
-  @@unique([name, categoryId]) 
+  @@unique([name, categoryId])
 }
 
 model StructureType {
   id         String      @id @default(uuid())
-  name       String      @unique // Tenda, Treliçado, Galpão
+  name       String      @unique
   structures Structure[]
 }
 
 model Structure {
-  id              String        @id @default(uuid())
+  id              String                      @id @default(uuid())
   structureTypeId String
-  type            StructureType @relation(fields: [structureTypeId], references: [id])
-  name            String        // 10x10, Q30, Grande
-
+  name            String
+  type            StructureType               @relation(fields: [structureTypeId], references: [id])
   templates       StructureMaterialTemplate[]
 }
 
-// Gabarito de Materiais
 model StructureMaterialTemplate {
   id          String    @id @default(uuid())
   structureId String
-  structure   Structure @relation(fields: [structureId], references: [id])
   materialId  String
-  material    Material  @relation(fields: [materialId], references: [id])
   quantity    Int
+  material    Material  @relation(fields: [materialId], references: [id])
+  structure   Structure @relation(fields: [structureId], references: [id])
 
   @@unique([structureId, materialId])
 }
 
 model ServiceOrderItem {
   id                String                 @id @default(uuid())
-  quantity          Int
-  
   serviceOrderId    String
+  materialId        String
+  quantity          Int
+  createdAt         DateTime               @default(now())
+  operationalUnitId String
+  status            ServiceOrderItemStatus @default(ADDED)
+  updatedAt         DateTime               @updatedAt
+  material          Material               @relation(fields: [materialId], references: [id])
+  operationalUnit   OperationalUnit        @relation(fields: [operationalUnitId], references: [id])
   serviceOrder      ServiceOrder           @relation(fields: [serviceOrderId], references: [id])
   
-  materialId        String
-  material          Material               @relation(fields: [materialId], references: [id])
+  physicalItems     PhysicalItem[]         // <- Relacionamento: Quais itens físicos específicos foram separados para atender essa quantidade?
+}
 
-  // <- ADICIONADO: Relacionamento com a Unidade Operacional (Galpão)
-  operationalUnitId String
-  operationalUnit   OperationalUnit        @relation(fields: [operationalUnitId], references: [id])
+// ==========================================
+// 📦 NOVO: CONTROLE DE ATIVOS FÍSICOS INDIVIDUAIS
+// ==========================================
+model PhysicalItem {
+  id                 String             @id @default(uuid()) // Pode ser usado como Código de Barras / QR Code
+  materialId         String
+  operationalUnitId  String
+  serviceOrderItemId String?            // Opcional: Só é preenchido quando o item é separado/reservado para uma OS
+  status             PhysicalItemStatus @default(AVAILABLE)
   
-  // <- ADICIONADO: Status do Item para rastrear se foi incluído ou removido na negociação
-  status            ServiceOrderItemStatus @default(ADDED)
-  
-  // <- ADICIONADO: Timestamps de auditoria
-  createdAt         DateTime               @default(now())
-  updatedAt         DateTime               @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  material           Material           @relation(fields: [materialId], references: [id])
+  operationalUnit    OperationalUnit    @relation(fields: [operationalUnitId], references: [id])
+  serviceOrderItem   ServiceOrderItem?  @relation(fields: [serviceOrderItemId], references: [id])
 }
 
 model InventoryMovement {
   id         String   @id @default(uuid())
   materialId String
-  material   Material @relation(fields: [materialId], references: [id])
-  type       String   // IN, OUT
+  type       String
   quantity   Int
   date       DateTime @default(now())
+  material   Material @relation(fields: [materialId], references: [id])
 }
