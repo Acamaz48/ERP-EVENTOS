@@ -8,7 +8,7 @@ datasource db {
 }
 
 // ==========================================
-// 📋 ENUMS
+// 📋 DOMÍNIO DE ENUMS (DICIONÁRIO DE DADOS)
 // ==========================================
 
 enum UserRole {
@@ -22,12 +22,13 @@ enum UserStatus {
   INACTIVE
 }
 
+// Representa a Máquina de Estados da Ordem de Serviço
 enum ServiceOrderStatus {
-  DRAFT
-  READY
-  ACTIVE
-  PENDING
-  CANCELED
+  DRAFT      // Criação inicial, rascunho
+  READY      // Pronta/Aprovada para uso
+  ACTIVE     // Enviada ao galpão para separação
+  PENDING    // Devolvida do galpão (aguardando revisão/ajuste)
+  CANCELED   // Cancelada
 }
 
 enum ServiceOrderItemStatus {
@@ -35,13 +36,17 @@ enum ServiceOrderItemStatus {
   REMOVED
 }
 
-// STATUS DO ITEM FÍSICO
+// Ciclo de Vida do Ativo Físico individual
 enum PhysicalItemStatus {
   AVAILABLE      // Disponível no galpão
   RESERVED       // Separado/em uso em uma Ordem de Serviço
   MAINTENANCE    // Quebrado / Em manutenção
   REMOVED        // Descartado / Perdido
 }
+
+// ==========================================
+// 🧑 DOMÍNIO DE USUÁRIOS E ACESSOS
+// ==========================================
 
 model User {
   id            String         @id @default(uuid())
@@ -56,8 +61,13 @@ model User {
   updatedAt     DateTime       @updatedAt
   role          UserRole       @default(PRODUCAO)
   status        UserStatus     @default(ACTIVE)
+  
   serviceOrders ServiceOrder[]
 }
+
+// ==========================================
+// 📅 DOMÍNIO DE EVENTOS E OPERAÇÃO
+// ==========================================
 
 model Event {
   id            String         @id @default(uuid())
@@ -67,21 +77,23 @@ model Event {
   status        String
   createdAt     DateTime       @default(now())
   addressId     String
+  
   address       Address        @relation(fields: [addressId], references: [id])
   serviceOrders ServiceOrder[]
 }
 
 model Address {
-  id               String            @id @default(uuid())
-  street           String?
-  number           String?
-  city             String?
-  state            String?
-  zipCode          String?
-  latitude         Float?
-  longitude        Float?
-  events           Event[]
-  operationalUnits OperationalUnit[]
+  id                String            @id @default(uuid())
+  street            String?
+  number            String?
+  city              String?
+  state             String?
+  zipCode           String?
+  latitude          Float?
+  longitude         Float?
+  
+  events            Event[]
+  operationalUnits  OperationalUnit[]
 }
 
 model OperationalUnit {
@@ -90,69 +102,34 @@ model OperationalUnit {
   addressId     String?
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
-  address       Address?           @relation(fields: [addressId], references: [id])
   
+  address       Address?           @relation(fields: [addressId], references: [id])
   items         ServiceOrderItem[]
-  physicalItems PhysicalItem[]     // <- Relacionamento com os itens físicos no galpão
+  physicalItems PhysicalItem[]     // Ativos armazenados nesta unidade
 }
+
+// ==========================================
+// 🛠️ DOMÍNIO DE ORDENS DE SERVIÇO (CORE)
+// ==========================================
 
 model ServiceOrder {
-  id           String             @id @default(uuid())
-  eventId      String
-  userId       String
-  createdAt    DateTime           @default(now())
-  missingItems Json?
-  supplier     String?
-  updatedAt    DateTime           @updatedAt
-  status       ServiceOrderStatus @default(DRAFT)
-  event        Event              @relation(fields: [eventId], references: [id])
-  user         User               @relation(fields: [userId], references: [id])
-  items        ServiceOrderItem[]
-}
+  id            String             @id @default(uuid())
+  eventId       String
+  userId        String
+  createdAt     DateTime           @default(now())
+  missingItems  Json?
+  supplier      String?
+  updatedAt     DateTime           @updatedAt
+  status        ServiceOrderStatus @default(DRAFT)
+  
+  event         Event              @relation(fields: [eventId], references: [id])
+  user          User               @relation(fields: [userId], references: [id])
+  items         ServiceOrderItem[]
 
-model MaterialCategory {
-  id        String     @id @default(uuid())
-  name      String     @unique
-  materials Material[]
-}
-
-model Material {
-  id            String                      @id @default(uuid())
-  name          String
-  categoryId    String
-  stock         Int                         @default(0) // Usado para itens em massa (parafusos)
-  movements     InventoryMovement[]
-  category      MaterialCategory            @relation(fields: [categoryId], references: [id])
-  orderItems    ServiceOrderItem[]
-  templates     StructureMaterialTemplate[]
-  physicalItems PhysicalItem[]              // <- Relacionamento: 1 Material tem N Itens Físicos (ex: 10 Treliças individuais)
-
-  @@unique([name, categoryId])
-}
-
-model StructureType {
-  id         String      @id @default(uuid())
-  name       String      @unique
-  structures Structure[]
-}
-
-model Structure {
-  id              String                      @id @default(uuid())
-  structureTypeId String
-  name            String
-  type            StructureType               @relation(fields: [structureTypeId], references: [id])
-  templates       StructureMaterialTemplate[]
-}
-
-model StructureMaterialTemplate {
-  id          String    @id @default(uuid())
-  structureId String
-  materialId  String
-  quantity    Int
-  material    Material  @relation(fields: [materialId], references: [id])
-  structure   Structure @relation(fields: [structureId], references: [id])
-
-  @@unique([structureId, materialId])
+  // Índices aplicados para prevenir Full Table Scan em dashboards e listagens
+  @@index([eventId])
+  @@index([userId])
+  @@index([status])
 }
 
 model ServiceOrderItem {
@@ -164,29 +141,63 @@ model ServiceOrderItem {
   operationalUnitId String
   status            ServiceOrderItemStatus @default(ADDED)
   updatedAt         DateTime               @updatedAt
+  
   material          Material               @relation(fields: [materialId], references: [id])
   operationalUnit   OperationalUnit        @relation(fields: [operationalUnitId], references: [id])
   serviceOrder      ServiceOrder           @relation(fields: [serviceOrderId], references: [id])
-  
-  physicalItems     PhysicalItem[]         // <- Relacionamento: Quais itens físicos específicos foram separados para atender essa quantidade?
+  physicalItems     PhysicalItem[]         
+
+  // Índices otimizados para joins frequentes com materiais e OS
+  @@index([serviceOrderId])
+  @@index([materialId])
+  @@index([operationalUnitId])
+  @@index([status])
 }
 
 // ==========================================
-// 📦 NOVO: CONTROLE DE ATIVOS FÍSICOS INDIVIDUAIS
+// 📦 DOMÍNIO DE ESTOQUE E MATERIAIS
 // ==========================================
+
+model MaterialCategory {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  materials Material[]
+}
+
+model Material {
+  id            String                      @id @default(uuid())
+  name          String
+  categoryId    String
+  stock         Int                         @default(0) // Quantidade em massa (ex: parafusos)
+  
+  movements     InventoryMovement[]
+  category      MaterialCategory            @relation(fields: [categoryId], references: [id])
+  orderItems    ServiceOrderItem[]
+  templates     StructureMaterialTemplate[]
+  physicalItems PhysicalItem[]              // Relação 1:N (1 Catálogo para N Itens Físicos etiquetados)
+
+  @@unique([name, categoryId])
+}
+
+// NOVO: Gestão unitária/serializada de ativos
 model PhysicalItem {
-  id                 String             @id @default(uuid()) // Pode ser usado como Código de Barras / QR Code
+  id                 String             @id @default(uuid()) // Usado para Código de Barras / QR Code
   materialId         String
   operationalUnitId  String
-  serviceOrderItemId String?            // Opcional: Só é preenchido quando o item é separado/reservado para uma OS
+  serviceOrderItemId String?            // Vinculação temporária quando despachado para OS
   status             PhysicalItemStatus @default(AVAILABLE)
-  
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
   material           Material           @relation(fields: [materialId], references: [id])
   operationalUnit    OperationalUnit    @relation(fields: [operationalUnitId], references: [id])
   serviceOrderItem   ServiceOrderItem?  @relation(fields: [serviceOrderItemId], references: [id])
+
+  // Índices vitais para escaneamento em massa no galpão
+  @@index([materialId])
+  @@index([operationalUnitId])
+  @@index([serviceOrderItemId])
+  @@index([status])
 }
 
 model InventoryMovement {
@@ -195,5 +206,37 @@ model InventoryMovement {
   type       String
   quantity   Int
   date       DateTime @default(now())
+  
   material   Material @relation(fields: [materialId], references: [id])
+}
+
+// ==========================================
+// 🏗️ DOMÍNIO DE ESTRUTURAS (KITS)
+// ==========================================
+
+model StructureType {
+  id         String      @id @default(uuid())
+  name       String      @unique
+  structures Structure[]
+}
+
+model Structure {
+  id              String                      @id @default(uuid())
+  structureTypeId String
+  name            String
+  
+  type            StructureType               @relation(fields: [structureTypeId], references: [id])
+  templates       StructureMaterialTemplate[]
+}
+
+model StructureMaterialTemplate {
+  id          String    @id @default(uuid())
+  structureId String
+  materialId  String
+  quantity    Int
+  
+  material    Material  @relation(fields: [materialId], references: [id])
+  structure   Structure @relation(fields: [structureId], references: [id])
+
+  @@unique([structureId, materialId])
 }

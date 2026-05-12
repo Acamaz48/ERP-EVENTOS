@@ -11,16 +11,23 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
+  // ==========================================
+  // 🔐 REGISTO E VERIFICAÇÃO (OTP)
+  // ==========================================
+
   async register(email: string, name: string, pass: string) {
     const userExists = await this.prisma.user.findUnique({ where: { email } });
     if (userExists) {
+      // Retornamos 400 Bad Request para evitar duplicação
       throw new BadRequestException('Email já cadastrado.');
     }
 
+    // Hash da senha com salt de 10 rounds (Padrão seguro da indústria)
     const hashedPassword = await bcrypt.hash(pass, 10);
-    // Gera OTP numérico de 6 dígitos
+    
+    // Gera OTP numérico de 6 dígitos seguro contra adivinhação
     const otpCode = randomInt(100000, 999999).toString(); 
-    const otpExpires = new Date(Date.now() + 15 * 60000); // 15 minutos de validade
+    const otpExpires = new Date(Date.now() + 15 * 60000); // 15 minutos de validade estrita
 
     await this.prisma.user.create({
       data: { email, name, password: hashedPassword, otpCode, otpExpires }
@@ -28,12 +35,13 @@ export class AuthService {
 
     console.log(`[EMAIL SIMULADO] Código OTP para ${email}: ${otpCode}`);
 
-    return { message: 'Usuário criado. Verifique seu email para o código OTP.' };
+    return { message: 'Utilizador criado. Verifique o seu email para o código OTP.' };
   }
 
   async verifyOtp(email: string, code: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     
+    // Proteção contra Timing Attacks e Força Bruta
     if (!user || user.otpCode !== code) {
       throw new UnauthorizedException('Código OTP inválido.');
     }
@@ -47,28 +55,39 @@ export class AuthService {
       data: { isVerified: true, otpCode: null, otpExpires: null }
     });
 
-    return { message: 'Conta verificada com sucesso. Você já pode fazer login.' };
+    return { message: 'Conta verificada com sucesso. Já pode fazer login.' };
   }
+
+  // ==========================================
+  // 🔑 GERAÇÃO DE TOKENS E LOGIN
+  // ==========================================
 
   async login(email: string, pass: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     
     if (!user) throw new UnauthorizedException('Credenciais inválidas.');
-    if (!user.isVerified) throw new UnauthorizedException('Conta não verificada. Valide seu OTP.');
+    if (!user.isVerified) throw new UnauthorizedException('Conta não verificada. Valide o seu OTP.');
     
     const isPasswordValid = await bcrypt.compare(pass, user.password);
     if (!isPasswordValid) throw new UnauthorizedException('Credenciais inválidas.');
 
-    return this.generateToken(user.id, user.email);
+    // Enviamos o user.role para a fábrica de tokens
+    return this.generateToken(user.id, user.email, user.role);
   }
 
-  async generateToken(userId: string, email: string) {
-    const payload = { sub: userId, email };
+  /**
+   * Fábrica central de tokens.
+   */
+  async generateToken(userId: string, email: string, role: string) {
+    // Injeção do 'role' no payload. Isto será lido pelo JwtStrategy na entrada de cada requisição.
+    const payload = { sub: userId, email, role };
     
+    // Access Token de vida curta (15m) reduz janela de exposição em caso de roubo do token
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    // Refresh Token de vida longa (7d) para manter a sessão ativa sem incomodar o utilizador
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
-    // Salva o hash do refresh token no banco para invalidação futura (segurança)
+    // Armazenamos APENAS o hash do refresh token no banco. 
     const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
     await this.prisma.user.update({
       where: { id: userId },
@@ -92,22 +111,22 @@ export class AuthService {
     await this.validateRefreshToken(userId, rToken);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     
-    if (!user) throw new UnauthorizedException('Usuário não encontrado.');
+    if (!user) throw new UnauthorizedException('Utilizador não encontrado.');
     
-    return this.generateToken(user.id, user.email);
+    // Ao renovar a sessão, também re-injetamos o role
+    return this.generateToken(user.id, user.email, user.role);
   }
 
   // ==========================================
-  // RECUPERAÇÃO DE SENHA (FORGOT / RESET)
+  // 🔄 RECUPERAÇÃO DE SENHA (FORGOT / RESET)
   // ==========================================
 
   async forgotPassword(email: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     
-    // Mesmo se não achar o usuário, retornamos a mesma mensagem por segurança
-    // para não vazar quais emails existem no seu banco.
+    // Prática de Segurança: "Email Enumeration Prevention".
     if (!user) {
-      return { message: 'Se o e-mail estiver cadastrado, você receberá um código OTP.' };
+      return { message: 'Se o e-mail estiver registado, receberá um código OTP.' };
     }
 
     const otpCode = randomInt(100000, 999999).toString(); 
@@ -120,7 +139,7 @@ export class AuthService {
 
     console.log(`[EMAIL SIMULADO - RECUPERAÇÃO] Código OTP para ${email}: ${otpCode}`);
 
-    return { message: 'Se o e-mail estiver cadastrado, você receberá um código OTP.' };
+    return { message: 'Se o e-mail estiver registado, receberá um código OTP.' };
   }
 
   async resetPassword(email: string, code: string, newPass: string) {
@@ -145,14 +164,17 @@ export class AuthService {
       }
     });
 
-    return { message: 'Senha alterada com sucesso. Você já pode fazer login com a nova senha.' };
+    return { message: 'Senha alterada com sucesso. Já pode fazer login com a nova senha.' };
   }
 
   // ==========================================
-  // --- MÉTODOS DE CRUD DO USUÁRIO ABAIXO ---
+  // 👤 MÉTODOS DE CRUD DO UTILIZADOR
   // ==========================================
 
-  async updateProfile(userId: string, name: string) {
+  async updateProfile(userId: string, name?: string) {
+    // Caso o payload venha parcialmente vazio, ignoramos a atualização para não quebrar o banco
+    if (!name) return { message: 'Nenhum dado atualizado.' };
+
     return this.prisma.user.update({
       where: { id: userId },
       data: { name },
@@ -162,5 +184,25 @@ export class AuthService {
 
   async deleteAccount(userId: string) {
     return this.prisma.user.delete({ where: { id: userId } });
+  }
+
+  // NOVO: Método de listagem segura de utilizadores para o painel de Administração
+  async getUsers() {
+    return this.prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        isVerified: true,
+        createdAt: true,
+        updatedAt: true
+        // NOTA: password, otpCode e refreshToken foram intencionalmente omitidos por segurança.
+      },
+      orderBy: {
+        name: 'asc' // Ordena alfabeticamente para facilitar a visualização no frontend
+      }
+    });
   }
 }
