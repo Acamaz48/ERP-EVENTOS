@@ -1,29 +1,63 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateMaterialDto } from './dto/create-materials.dto';
-import { CreateStructureTemplateDto } from './dto/create-structure-template.dto';
-import { UpdateMaterialDto } from './dto/update-material.dto';
 import { PhysicalItemStatus } from '@prisma/client';
+
+// CORREÇÃO: Consumindo o ficheiro unificado de DTOs
+import { 
+  CreateMaterialDto, 
+  CreateStructureTemplateDto, 
+  UpdateMaterialDto,
+  RegisterStockDto 
+} from './dto/material.dto';
 
 @Injectable()
 export class MaterialsService {
   constructor(private prisma: PrismaService) {}
 
-  // Exemplo de lógica para o seu Service futuramente
-async registerNewStock(materialId: string, operationalUnitId: string, quantity: number) {
-  const items = Array.from({ length: quantity }).map(() => ({
-    materialId,
-    operationalUnitId,
-    status: PhysicalItemStatus.AVAILABLE,
-  }));
+  // ==========================================
+  // 🏭 REGISTO DE ESTOQUE FÍSICO (Transacional)
+  // ==========================================
+  async registerNewStock(materialId: string, dto: RegisterStockDto) {
+    const materialExists = await this.prisma.material.findUnique({ where: { id: materialId } });
+    if (!materialExists) throw new NotFoundException('Material não encontrado no catálogo.');
 
-  // Cria 50 itens físicos de uma vez no banco
-  return this.prisma.physicalItem.createMany({ data: items });
-}
+    // CORREÇÃO CRÍTICA: Transação Atómica. O Prisma garante que ou todas as etapas funcionam, ou nenhuma é salva.
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Cria os itens físicos individuais (serializados/etiquetáveis) no galpão
+      const items = Array.from({ length: dto.quantity }).map(() => ({
+        materialId,
+        operationalUnitId: dto.operationalUnitId,
+        status: PhysicalItemStatus.AVAILABLE,
+      }));
+      await tx.physicalItem.createMany({ data: items });
 
-  // 1. Cria o Material e a Categoria (se não existir)
+      // 2. Atualiza o contador de estoque agregado na tabela pai (Material)
+      const updatedMaterial = await tx.material.update({
+        where: { id: materialId },
+        data: {
+          stock: { increment: dto.quantity } // Incremento seguro contra condições de corrida (Race Conditions)
+        }
+      });
+
+      // 3. Registra a movimentação para auditoria (Histórico de Inventário)
+      await tx.inventoryMovement.create({
+        data: {
+          materialId,
+          type: 'ENTRADA',
+          quantity: dto.quantity
+        }
+      });
+
+      return updatedMaterial;
+    });
+  }
+
+  // ==========================================
+  // 📦 GESTÃO DO CATÁLOGO DE MATERIAIS BASE
+  // ==========================================
+  
   async createMaterial(dto: CreateMaterialDto) {
-    // Upsert: Atualiza se existir, Cria se não existir
+    // Upsert: Atualiza se existir, Cria se não existir (evita duplicação de categorias)
     const category = await this.prisma.materialCategory.upsert({
       where: { name: dto.categoryName },
       update: {},
@@ -39,12 +73,71 @@ async registerNewStock(materialId: string, operationalUnitId: string, quantity: 
         },
       });
     } catch (error) {
-      // Trata nosso @@unique([name, categoryId]) do schema
+      // Trata nosso constraint @@unique([name, categoryId]) do Prisma schema
       throw new BadRequestException('Este material já existe nesta categoria.');
     }
   }
 
-  // 2. Cria a Estrutura e já vincula o Gabarito de Materiais
+  async findAllMaterials() {
+    return this.prisma.material.findMany({ 
+      include: { category: true },
+      orderBy: { name: 'asc' }
+    });
+  }
+
+  async findOneMaterial(id: string) {
+    const material = await this.prisma.material.findUnique({ 
+      where: { id }, 
+      include: { category: true } 
+    });
+    if (!material) throw new NotFoundException('Material não encontrado.');
+    return material;
+  }
+
+  async updateMaterial(id: string, dto: UpdateMaterialDto) {
+    return this.prisma.material.update({
+      where: { id },
+      data: dto,
+    });
+  }
+
+  // CORREÇÃO CRÍTICA: Exclusão Segura
+  async removeMaterial(id: string) {
+    // 1. Verifica se o material existe e conta quantas amarras ele possui
+    const material = await this.prisma.material.findUnique({ 
+      where: { id },
+      include: {
+        _count: {
+          select: { physicalItems: true, templates: true, orderItems: true }
+        }
+      }
+    });
+
+    if (!material) throw new NotFoundException('Material não encontrado.');
+
+    // 2. Regra de Negócio: Impede a exclusão se houver dependências ativas
+    if (material.stock > 0 || material._count.physicalItems > 0) {
+      throw new BadRequestException('Acesso negado: Este material possui itens físicos em estoque.');
+    }
+    if (material._count.templates > 0) {
+      throw new BadRequestException('Acesso negado: Este material faz parte da composição de uma ou mais Estruturas/Kits.');
+    }
+    if (material._count.orderItems > 0) {
+      throw new BadRequestException('Acesso negado: Este material possui histórico em Ordens de Serviço.');
+    }
+
+    // 3. Se passou pelas regras, exclui o material com segurança
+    return this.prisma.$transaction(async (tx) => {
+      // Remove o histórico de movimento zerado para não deixar lixo, depois remove o material
+      await tx.inventoryMovement.deleteMany({ where: { materialId: id } });
+      return tx.material.delete({ where: { id } });
+    });
+  }
+
+  // ==========================================
+  // 🏗️ GESTÃO DE ESTRUTURAS (KITS DE MATERIAIS)
+  // ==========================================
+  
   async createStructureWithTemplate(dto: CreateStructureTemplateDto) {
     const type = await this.prisma.structureType.upsert({
       where: { name: dto.typeName },
@@ -56,7 +149,7 @@ async registerNewStock(materialId: string, operationalUnitId: string, quantity: 
       data: {
         name: dto.structureName,
         structureTypeId: type.id,
-        // Cria os itens do gabarito de uma vez só!
+        // Cria os itens do gabarito numa operação em cascata
         templates: {
           create: dto.items.map(item => ({
             materialId: item.materialId,
@@ -64,38 +157,22 @@ async registerNewStock(materialId: string, operationalUnitId: string, quantity: 
           }))
         }
       },
-      include: { templates: true } // Retorna os itens criados para vermos
+      include: { templates: true } 
     });
-  }
-
-  // 3. Lista tudo para o nosso frontend depois
-  async findAllMaterials() {
-    return this.prisma.material.findMany({ include: { category: true } });
   }
 
   async findAllStructures() {
-    return this.prisma.structure.findMany({ include: { type: true, templates: true } });
-  }
-
-  // --- NOVOS MÉTODOS DE CRUD ABAIXO ---
-
-  async findOneMaterial(id: string) {
-    return this.prisma.material.findUnique({ where: { id }, include: { category: true } });
-  }
-
-  async updateMaterial(id: string, dto: UpdateMaterialDto) {
-    return this.prisma.material.update({
-      where: { id },
-      data: dto,
+    return this.prisma.structure.findMany({ 
+      include: { 
+        type: true, 
+        templates: { include: { material: true } } // Retorna os nomes reais dos materiais do Kit
+      },
+      orderBy: { name: 'asc' }
     });
   }
 
-  async removeMaterial(id: string) {
-    return this.prisma.material.delete({ where: { id } });
-  }
-
   async removeStructure(id: string) {
-    // Exclui primeiro o gabarito (dependência) e depois a estrutura
+    // Exclui primeiro o gabarito (tabela pivô) e depois a estrutura principal
     return this.prisma.$transaction(async (tx) => {
       await tx.structureMaterialTemplate.deleteMany({ where: { structureId: id } });
       return tx.structure.delete({ where: { id } });

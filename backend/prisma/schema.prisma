@@ -13,7 +13,7 @@ datasource db {
 
 enum UserRole {
   PRODUCAO
-  GALPAO
+  GALPAO  
   ADMIN
 }
 
