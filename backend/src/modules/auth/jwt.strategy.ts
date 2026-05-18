@@ -12,8 +12,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: any) {
-    // Esse retorno é injetado automaticamente no objeto request (req.user)
-    return { userId: payload.sub, email: payload.email };
+    async validate(payload: any) {
+    // Agora o req.user terá a role embutida!
+    return { userId: payload.sub, email: payload.email, role: payload.role }; 
   }
 }

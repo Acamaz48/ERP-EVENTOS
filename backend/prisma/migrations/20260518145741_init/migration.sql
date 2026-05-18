@@ -1,9 +1,23 @@
+-- CreateEnum
+CREATE TYPE "UserRole" AS ENUM ('PRODUCAO', 'GALPAO', 'ADMIN');
+
+-- CreateEnum
+CREATE TYPE "UserStatus" AS ENUM ('ACTIVE', 'INACTIVE');
+
+-- CreateEnum
+CREATE TYPE "ServiceOrderStatus" AS ENUM ('DRAFT', 'ACTIVE', 'PENDING', 'READY', 'CANCELED');
+
+-- CreateEnum
+CREATE TYPE "ServiceOrderItemStatus" AS ENUM ('ADDED', 'REMOVED');
+
 -- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "password" TEXT NOT NULL,
     "name" TEXT NOT NULL,
+    "role" "UserRole" NOT NULL DEFAULT 'PRODUCAO',
+    "status" "UserStatus" NOT NULL DEFAULT 'ACTIVE',
     "isVerified" BOOLEAN NOT NULL DEFAULT false,
     "otpCode" TEXT,
     "otpExpires" TIMESTAMP(3),
@@ -18,14 +32,38 @@ CREATE TABLE "User" (
 CREATE TABLE "Event" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
-    "latitude" DOUBLE PRECISION NOT NULL,
-    "longitude" DOUBLE PRECISION NOT NULL,
     "startDate" TIMESTAMP(3) NOT NULL,
     "endDate" TIMESTAMP(3) NOT NULL,
     "status" TEXT NOT NULL,
+    "addressId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Event_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Address" (
+    "id" TEXT NOT NULL,
+    "street" TEXT,
+    "number" TEXT,
+    "city" TEXT,
+    "state" TEXT,
+    "zipCode" TEXT,
+    "latitude" DOUBLE PRECISION,
+    "longitude" DOUBLE PRECISION,
+
+    CONSTRAINT "Address_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "OperationalUnit" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "addressId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "OperationalUnit_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -33,8 +71,11 @@ CREATE TABLE "ServiceOrder" (
     "id" TEXT NOT NULL,
     "eventId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "status" TEXT NOT NULL,
+    "status" "ServiceOrderStatus" NOT NULL DEFAULT 'DRAFT',
+    "supplier" TEXT,
+    "missingItems" JSONB,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "ServiceOrder_pkey" PRIMARY KEY ("id")
 );
@@ -87,9 +128,13 @@ CREATE TABLE "StructureMaterialTemplate" (
 -- CreateTable
 CREATE TABLE "ServiceOrderItem" (
     "id" TEXT NOT NULL,
+    "quantity" INTEGER NOT NULL,
     "serviceOrderId" TEXT NOT NULL,
     "materialId" TEXT NOT NULL,
-    "quantity" INTEGER NOT NULL,
+    "operationalUnitId" TEXT NOT NULL,
+    "status" "ServiceOrderItemStatus" NOT NULL DEFAULT 'ADDED',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "ServiceOrderItem_pkey" PRIMARY KEY ("id")
 );
@@ -121,6 +166,12 @@ CREATE UNIQUE INDEX "StructureType_name_key" ON "StructureType"("name");
 CREATE UNIQUE INDEX "StructureMaterialTemplate_structureId_materialId_key" ON "StructureMaterialTemplate"("structureId", "materialId");
 
 -- AddForeignKey
+ALTER TABLE "Event" ADD CONSTRAINT "Event_addressId_fkey" FOREIGN KEY ("addressId") REFERENCES "Address"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "OperationalUnit" ADD CONSTRAINT "OperationalUnit_addressId_fkey" FOREIGN KEY ("addressId") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "ServiceOrder" ADD CONSTRAINT "ServiceOrder_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -143,6 +194,9 @@ ALTER TABLE "ServiceOrderItem" ADD CONSTRAINT "ServiceOrderItem_serviceOrderId_f
 
 -- AddForeignKey
 ALTER TABLE "ServiceOrderItem" ADD CONSTRAINT "ServiceOrderItem_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ServiceOrderItem" ADD CONSTRAINT "ServiceOrderItem_operationalUnitId_fkey" FOREIGN KEY ("operationalUnitId") REFERENCES "OperationalUnit"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "InventoryMovement" ADD CONSTRAINT "InventoryMovement_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

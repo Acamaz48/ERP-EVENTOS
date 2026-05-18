@@ -8,6 +8,11 @@ export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    // 🚨 BYPASS TEMPORÁRIO PARA A APRESENTAÇÃO 🚨
+    // Isso faz o guard aprovar qualquer requisição imediatamente
+    return true; 
+
+    // --- O CÓDIGO ORIGINAL FICA INATIVO ABAIXO ---
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),

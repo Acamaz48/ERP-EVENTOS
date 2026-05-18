@@ -59,11 +59,14 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(pass, user.password);
     if (!isPasswordValid) throw new UnauthorizedException('Credenciais inválidas.');
 
-    return this.generateToken(user.id, user.email);
+    // 1. Passamos a role (cargo) do usuário na hora de gerar o token
+    return this.generateToken(user.id, user.email, user.role);
   }
 
-  async generateToken(userId: string, email: string) {
-    const payload = { sub: userId, email };
+  // 2. Adicionamos o parâmetro "role" na assinatura do método
+  async generateToken(userId: string, email: string, role: string) {
+    // 3. Embutimos a role dentro do payload do token
+    const payload = { sub: userId, email, role };
     
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
@@ -94,7 +97,8 @@ export class AuthService {
     
     if (!user) throw new UnauthorizedException('Usuário não encontrado.');
     
-    return this.generateToken(user.id, user.email);
+    // 4. Repassamos a role na hora de gerar um token novo via refresh
+    return this.generateToken(user.id, user.email, user.role);
   }
 
   // --- NOVOS MÉTODOS DE CRUD DO USUÁRIO ABAIXO ---
