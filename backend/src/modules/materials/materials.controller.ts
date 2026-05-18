@@ -1,4 +1,13 @@
-import { Controller, Post, Get, Body, UseGuards, Param, Patch, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  UseGuards,
+  Param,
+  Patch,
+  Delete,
+} from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -60,7 +69,10 @@ export class MaterialsController {
   // NOVO ENDPOINT: Rota dedicada para dar entrada no estoque físico de um material
   @Post(':id/stock')
   @Roles(UserRole.GALPAO, UserRole.ADMIN) // Estritamente logístico
-  registerStock(@Param('id') materialId: string, @Body() dto: RegisterStockDto) {
+  registerStock(
+    @Param('id') materialId: string,
+    @Body() dto: RegisterStockDto,
+  ) {
     return this.materialsService.registerNewStock(materialId, dto);
   }
 
